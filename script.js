@@ -3,7 +3,7 @@ const ctx = canvas.getContext('2d');
 const colorPicker = document.getElementById('colorPicker');
 
 // ここをあなたのRenderアプリのURLに置き換えてください
-const WS_URL = 'https://pplace.onrender.comcom';
+const WS_URL = 'wss://pplace.onrender.comcom';
 const ws = new WebSocket(WS_URL);
 
 const gridSize = 1000; // グリッドを1000x1000に拡大
