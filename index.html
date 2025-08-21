@@ -2,26 +2,51 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>r/place-like Board</title>
+  <title>w/place-like Board</title>
   <style>
-    body { font-family: sans-serif; text-align: center; margin: 0; overflow: hidden; }
-    #palette { display: flex; flex-wrap: wrap; justify-content: center; margin: 10px; }
+    body { margin: 0; overflow: hidden; font-family: sans-serif; background:#eee; }
+    #toolbar {
+      position: absolute;
+      top: 10px; left: 10px;
+      background: rgba(255,255,255,0.9);
+      padding: 6px;
+      border-radius: 6px;
+      display: flex; gap: 6px;
+      z-index: 10;
+    }
+    #toolbar button {
+      padding: 4px 8px;
+      cursor: pointer;
+      border: 1px solid #333;
+      background: #f0f0f0;
+    }
+    #toolbar button.active {
+      background: #4CAF50;
+      color: white;
+    }
+    #palette {
+      position: absolute;
+      top: 60px; left: 50%; transform: translateX(-50%);
+      display: flex; flex-wrap: wrap;
+      background: rgba(255,255,255,0.8);
+      padding: 6px; border-radius: 6px;
+      z-index: 10;
+    }
     .color {
       width: 24px; height: 24px; margin: 2px;
       border: 1px solid #000; cursor: pointer;
     }
     .selected { border: 3px solid red !important; }
-    #container { width: 100vw; height: 80vh; overflow: hidden; position: relative; }
-    canvas { border: 1px solid black; touch-action: none; }
+    canvas { display:block; touch-action: none; image-rendering: pixelated; }
   </style>
 </head>
 <body>
-  <h1>r/place-like Board</h1>
-  <p>Cooldown: <span id="cooldown">0</span>s</p>
-  <div id="palette"></div>
-  <div id="container">
-    <canvas id="board" width="512" height="512"></canvas>
+  <div id="toolbar">
+    <button id="moveBtn" class="active">✋ 移動</button>
+    <button id="paintBtn">🖌 ペイント</button>
   </div>
+  <div id="palette"></div>
+  <canvas id="board"></canvas>
 
   <script>
     const DEFAULT_WS_URL = "wss://pplace.onrender.com/ws";
@@ -36,11 +61,26 @@
 
     const canvas = document.getElementById("board");
     const ctx = canvas.getContext("2d");
-    const cooldownEl = document.getElementById("cooldown");
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    // 仮想キャンバス
+    const offscreen = document.createElement("canvas");
+    offscreen.width = WIDTH;
+    offscreen.height = HEIGHT;
+    const offctx = offscreen.getContext("2d");
+    offctx.fillStyle = "#fff";
+    offctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+    // 状態
     let currentColor = PALETTE[0];
     let cooldown = 0;
+    let mode = "move"; // "move" or "paint"
+    let zoom = 20, offsetX = canvas.width/2 - (WIDTH*zoom)/2, offsetY = canvas.height/2 - (HEIGHT*zoom)/2;
+    let isPanning = false, lastX = 0, lastY = 0;
+    let touchMode = null, lastDist = 0;
 
-    // palette setup
+    // パレット作成
     const paletteDiv = document.getElementById("palette");
     PALETTE.forEach(c => {
       const div = document.createElement("div");
@@ -55,133 +95,120 @@
     });
     paletteDiv.firstChild.classList.add("selected");
 
+    // toolbar
+    const moveBtn = document.getElementById("moveBtn");
+    const paintBtn = document.getElementById("paintBtn");
+    moveBtn.onclick = () => { mode = "move"; moveBtn.classList.add("active"); paintBtn.classList.remove("active"); };
+    paintBtn.onclick = () => { mode = "paint"; paintBtn.classList.add("active"); moveBtn.classList.remove("active"); };
+
     // websocket
     const ws = new WebSocket(DEFAULT_WS_URL);
     ws.onopen = () => console.log("Connected");
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.type === "pixel") {
-        drawPixel(msg.x, msg.y, msg.color);
+        setPixel(msg.x, msg.y, msg.color);
       }
     };
 
-    function drawPixel(x, y, hex) {
-      const rgb = hexToRgb(hex);
-      const imageData = ctx.createImageData(1,1);
-      imageData.data[0] = rgb.r;
-      imageData.data[1] = rgb.g;
-      imageData.data[2] = rgb.b;
-      imageData.data[3] = 255;
-      ctx.putImageData(imageData, x, y);
+    function setPixel(x,y,color){
+      offctx.fillStyle = color;
+      offctx.fillRect(x,y,1,1);
     }
-
-    function hexToRgb(hex) {
-      const bigint = parseInt(hex.slice(1), 16);
-      return { r:(bigint>>16)&255, g:(bigint>>8)&255, b:bigint&255 };
-    }
-
-    // cooldown
-    setInterval(() => {
-      if (cooldown > 0) {
-        cooldown--;
-        cooldownEl.textContent = cooldown;
-      }
-    }, 1000);
-
-    // place pixel
-    function placePixel(x, y) {
-      if (cooldown > 0) return;
+    function placePixel(x,y){
+      if (cooldown>0) return;
       ws.send(JSON.stringify({ type:"set", x, y, color: currentColor }));
+      setPixel(x,y,currentColor);
       cooldown = 5;
-      cooldownEl.textContent = cooldown;
+      setTimeout(()=>cooldown=0,5000);
     }
 
-    // transform handling (zoom + pan)
-    let zoom = 1, offsetX = 0, offsetY = 0;
-    let isPanning = false, lastX = 0, lastY = 0;
-
-    function updateTransform() {
-      canvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`;
-      canvas.style.transformOrigin = "0 0";
+    // 座標変換
+    function screenToBoard(px,py){
+      const invZoom = 1/zoom;
+      return {
+        x: Math.floor((px - offsetX)*invZoom),
+        y: Math.floor((py - offsetY)*invZoom)
+      };
     }
 
-    // mouse controls
-    canvas.addEventListener("wheel", e => {
+    // 描画ループ
+    function render(){
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.setTransform(zoom,0,0,zoom,offsetX,offsetY);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(offscreen,0,0);
+
+      // グリッド
+      ctx.beginPath();
+      for(let x=0; x<=WIDTH; x++) { ctx.moveTo(x,0); ctx.lineTo(x,HEIGHT); }
+      for(let y=0; y<=HEIGHT; y++) { ctx.moveTo(0,y); ctx.lineTo(WIDTH,y); }
+      ctx.lineWidth = 0.02;
+      ctx.strokeStyle = "rgba(0,0,0,0.1)";
+      ctx.stroke();
+
+      requestAnimationFrame(render);
+    }
+    render();
+
+    // マウス操作
+    window.addEventListener("wheel", e=>{
       e.preventDefault();
-      const scale = e.deltaY > 0 ? 0.9 : 1.1;
-      zoom = Math.min(20, Math.max(0.5, zoom * scale));
-      updateTransform();
-    });
-
-    canvas.addEventListener("mousedown", e => {
-      isPanning = true;
-      lastX = e.clientX;
-      lastY = e.clientY;
-    });
-    window.addEventListener("mouseup", () => isPanning = false);
-    window.addEventListener("mousemove", e => {
-      if (!isPanning) return;
-      offsetX += e.clientX - lastX;
-      offsetY += e.clientY - lastY;
-      lastX = e.clientX;
-      lastY = e.clientY;
-      updateTransform();
-    });
-
-    canvas.addEventListener("click", e => {
-      const rect = canvas.getBoundingClientRect();
-      const x = Math.floor((e.clientX - rect.left - offsetX) / zoom);
-      const y = Math.floor((e.clientY - rect.top - offsetY) / zoom);
-      if (x>=0 && x<WIDTH && y>=0 && y<HEIGHT) placePixel(x,y);
-    });
-
-    // touch controls for mobile/tablet
-    let touchMode = null; // "pan" or "zoom"
-    let lastDist = 0;
-
-    canvas.addEventListener("touchstart", e => {
-      if (e.touches.length === 1) {
-        touchMode = "pan";
-        lastX = e.touches[0].clientX;
-        lastY = e.touches[0].clientY;
-      } else if (e.touches.length === 2) {
-        touchMode = "zoom";
-        lastDist = getTouchDist(e);
+      const scale = e.deltaY>0 ? 0.9 : 1.1;
+      zoom = Math.min(80, Math.max(2, zoom*scale));
+    }, {passive:false});
+    window.addEventListener("mousedown", e=>{
+      if (mode==="move") {
+        isPanning = true; lastX = e.clientX; lastY = e.clientY;
       }
     });
+    window.addEventListener("mouseup", ()=> isPanning=false);
+    window.addEventListener("mousemove", e=>{
+      if (isPanning) {
+        offsetX += (e.clientX - lastX);
+        offsetY += (e.clientY - lastY);
+        lastX = e.clientX; lastY = e.clientY;
+      }
+    });
+    canvas.addEventListener("click", e=>{
+      if (mode!=="paint") return;
+      const pos = screenToBoard(e.clientX,e.clientY);
+      if (pos.x>=0 && pos.x<WIDTH && pos.y>=0 && pos.y<HEIGHT) placePixel(pos.x,pos.y);
+    });
 
-    canvas.addEventListener("touchmove", e => {
+    // タッチ操作
+    canvas.addEventListener("touchstart", e=>{
+      if (e.touches.length===1) {
+        if (mode==="move") {
+          touchMode="pan"; lastX=e.touches[0].clientX; lastY=e.touches[0].clientY;
+        } else if (mode==="paint") {
+          const pos=screenToBoard(e.touches[0].clientX,e.touches[0].clientY);
+          placePixel(pos.x,pos.y);
+        }
+      } else if (e.touches.length===2) {
+        touchMode="zoom"; lastDist=getTouchDist(e);
+      }
+    });
+    canvas.addEventListener("touchmove", e=>{
       e.preventDefault();
-      if (touchMode === "pan" && e.touches.length === 1) {
-        offsetX += e.touches[0].clientX - lastX;
-        offsetY += e.touches[0].clientY - lastY;
-        lastX = e.touches[0].clientX;
-        lastY = e.touches[0].clientY;
-        updateTransform();
-      } else if (touchMode === "zoom" && e.touches.length === 2) {
-        const dist = getTouchDist(e);
-        zoom *= dist / lastDist;
-        zoom = Math.min(20, Math.max(0.5, zoom));
-        lastDist = dist;
-        updateTransform();
+      if (touchMode==="pan" && e.touches.length===1) {
+        offsetX += (e.touches[0].clientX-lastX);
+        offsetY += (e.touches[0].clientY-lastY);
+        lastX=e.touches[0].clientX; lastY=e.touches[0].clientY;
+      } else if (touchMode==="zoom" && e.touches.length===2) {
+        const dist=getTouchDist(e);
+        zoom *= dist/lastDist;
+        zoom=Math.min(80,Math.max(2,zoom));
+        lastDist=dist;
       }
-    }, { passive:false });
+    }, {passive:false});
+    canvas.addEventListener("touchend", ()=>{touchMode=null;});
 
-    canvas.addEventListener("touchend", e => {
-      if (e.touches.length === 0 && touchMode === "pan") {
-        // tap = place pixel
-        const rect = canvas.getBoundingClientRect();
-        const x = Math.floor((lastX - rect.left - offsetX) / zoom);
-        const y = Math.floor((lastY - rect.top - offsetY) / zoom);
-        if (x>=0 && x<WIDTH && y>=0 && y<HEIGHT) placePixel(x,y);
-      }
-      touchMode = null;
-    });
-
-    function getTouchDist(e) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      return Math.sqrt(dx*dx + dy*dy);
+    function getTouchDist(e){
+      const dx=e.touches[0].clientX-e.touches[1].clientX;
+      const dy=e.touches[0].clientY-e.touches[1].clientY;
+      return Math.sqrt(dx*dx+dy*dy);
     }
   </script>
 </body>
