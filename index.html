@@ -3,151 +3,78 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>pplace – r/place-like Frontend</title>
+  <title>pplace – simple r/place-like</title>
   <style>
-    :root {
-      --bg: #0b0f14;
-      --panel: #111826;
-      --muted: #94a3b8;
-      --text: #e2e8f0;
-      --accent: #22d3ee;
-      --danger: #ef4444;
-      --ok: #22c55e;
-      --shadow: 0 10px 30px rgba(0,0,0,.35);
-    }
-    * { box-sizing: border-box; }
-    html, body { height: 100%; background: var(--bg); color: var(--text); font: 14px/1.6 system-ui, sans-serif; }
-    body { margin: 0; display: grid; grid-template-rows: auto 1fr auto; }
-
-    header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #0f172a; }
-    header .dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 10px currentColor; }
-    header .status { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--muted); }
-    .btn { border: 0; background: #1a2334; color: var(--text); padding: 8px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; }
-    .btn:disabled { opacity: .6; cursor: not-allowed; }
-
-    main { display: grid; grid-template-columns: 1fr 220px; gap: 8px; padding: 8px; }
-    .boardWrap { position: relative; background: #000; border-radius: 8px; overflow: hidden; }
-    canvas { display:block; width: 100%; height: 100%; background: #000; image-rendering: pixelated; }
-    .coords { position: absolute; left: 10px; bottom: 10px; background: #000a; padding: 4px 8px; border-radius: 6px; font-size: 12px; color: var(--muted); }
-
-    aside { display: grid; gap: 8px; }
-    .panel { background: #0f172a; border: 1px solid #1f2a44; border-radius: 8px; padding: 8px; }
-    .palette { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
-    .swatch { width: 28px; height: 28px; border-radius: 4px; border: 1px solid rgba(255,255,255,.2); cursor: pointer; }
-    .swatch.active { outline: 2px solid #fff; }
-
-    footer { padding: 8px 14px; color: var(--muted); font-size: 12px; }
+    body { margin:0; background:#111; color:#fff; font-family:sans-serif; }
+    #top { padding:6px; background:#222; display:flex; gap:6px; align-items:center; }
+    #board { display:block; margin:0 auto; background:#000; image-rendering:pixelated; }
+    #palette { display:grid; grid-template-columns:repeat(6,1fr); gap:4px; padding:6px; background:#222; }
+    .swatch { width:28px; height:28px; cursor:pointer; border:1px solid #444; }
+    .swatch.active { outline:2px solid #fff; }
   </style>
 </head>
 <body>
-  <header>
-    <div class="status"><span id="connDot" class="dot" style="color:#64748b"></span><span id="connText">DISCONNECTED</span></div>
-    <div style="flex:1"></div>
-    <button id="recenterBtn" class="btn">Recenter</button>
-    <button id="exportBtn" class="btn">Export</button>
-  </header>
-
-  <main>
-    <div class="boardWrap">
-      <canvas id="board" width="512" height="512"></canvas>
-      <div id="coord" class="coords">(x: -, y: -)</div>
-    </div>
-
-    <aside>
-      <section class="panel">
-        <h4>Colors</h4>
-        <div id="palette" class="palette"></div>
-      </section>
-      <section class="panel">
-        <h4>Server</h4>
-        <input id="wsUrl" style="width:100%;margin-bottom:4px;padding:6px;border-radius:4px;border:1px solid #333;background:#000;color:#fff" />
-        <button id="connectBtn" class="btn" style="width:100%">Connect</button>
-      </section>
-    </aside>
-  </main>
-
-  <footer>
-    Simple r/place-like frontend.
-  </footer>
+  <div id="top">
+    <input id="wsUrl" style="flex:1" placeholder="wss://..." />
+    <button id="connectBtn">Connect</button>
+    <span id="status">● DISCONNECTED</span>
+  </div>
+  <canvas id="board" width="256" height="256"></canvas>
+  <div id="palette"></div>
 
 <script>
 (function(){
-  const COLORS = ['#000000','#FFFFFF','#FF0000','#00FF00','#0000FF','#FFFF00','#FF00FF','#00FFFF','#888888','#FFA500','#800080','#008000'];
-  const canvas = document.getElementById('board');
-  const ctx = canvas.getContext('2d');
-  const coordEl = document.getElementById('coord');
-  const paletteEl = document.getElementById('palette');
-  const wsUrlInput = document.getElementById('wsUrl');
-  const connectBtn = document.getElementById('connectBtn');
-  const recenterBtn = document.getElementById('recenterBtn');
-  const exportBtn = document.getElementById('exportBtn');
-  const connDot = document.getElementById('connDot');
-  const connText = document.getElementById('connText');
+  const COLORS=['#000000','#FFFFFF','#FF0000','#00FF00','#0000FF','#FFFF00','#FF00FF','#00FFFF','#888888','#FFA500','#800080','#008000'];
+  const canvas=document.getElementById('board');
+  const ctx=canvas.getContext('2d');
+  let W=256,H=256;let pixels=ctx.createImageData(W,H);
+  let ws=null,color=COLORS[0];
 
-  let W=256, H=256;
-  let pixels = ctx.createImageData(W,H);
-  let ws=null, color=COLORS[0];
-
-  function drawBoard(){ ctx.putImageData(pixels,0,0); requestAnimationFrame(drawBoard); }
+  function draw(){ctx.putImageData(pixels,0,0);requestAnimationFrame(draw);}draw();
 
   function setPixel(x,y,hex){
-    if(x<0||y<0||x>=W||y>=H) return;
+    if(x<0||y<0||x>=W||y>=H)return;
     const i=(y*W+x)*4;
     const rgb=hex.match(/#(..)(..)(..)/).slice(1).map(h=>parseInt(h,16));
     [pixels.data[i],pixels.data[i+1],pixels.data[i+2],pixels.data[i+3]]=[rgb[0],rgb[1],rgb[2],255];
   }
 
-  function send(obj){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(obj)); }
+  function send(obj){if(ws&&ws.readyState===1)ws.send(JSON.stringify(obj));}
 
   function connect(url){
-    if(ws) ws.close();
+    if(ws)ws.close();
     ws=new WebSocket(url);
-    ws.onopen=()=>{connDot.style.color='var(--ok)';connText.textContent='CONNECTED';};
-    ws.onclose=()=>{connDot.style.color='#64748b';connText.textContent='DISCONNECTED';};
+    ws.onopen=()=>{status.textContent='● CONNECTED';};
+    ws.onclose=()=>{status.textContent='● DISCONNECTED';};
     ws.onmessage=(ev)=>{
-      try{const msg=JSON.parse(ev.data);
-        if(msg.type==='init'){W=msg.width;H=msg.height;pixels=ctx.createImageData(W,H);}
-        if(msg.type==='pixel') setPixel(msg.x,msg.y,msg.color);
+      try{const m=JSON.parse(ev.data);
+        if(m.type==='init'){W=m.width;H=m.height;pixels=ctx.createImageData(W,H);}
+        if(m.type==='pixel')setPixel(m.x,m.y,m.color);
       }catch{}
     };
   }
 
-  canvas.addEventListener('mousemove',(e)=>{
-    const rect=canvas.getBoundingClientRect();
-    const x=Math.floor((e.clientX-rect.left)/rect.width*W);
-    const y=Math.floor((e.clientY-rect.top)/rect.height*H);
-    coordEl.textContent=`(x:${x}, y:${y})`;
-  });
-
-  let isDrawing=false;
-  canvas.addEventListener('mousedown',(e)=>{isDrawing=true;place(e);});
-  canvas.addEventListener('mouseup',()=>{isDrawing=false;});
-  canvas.addEventListener('mousemove',(e)=>{if(isDrawing) place(e);});
+  let drawing=false;
+  canvas.addEventListener('mousedown',e=>{drawing=true;place(e);});
+  canvas.addEventListener('mouseup',()=>drawing=false);
+  canvas.addEventListener('mousemove',e=>{if(drawing)place(e);});
 
   function place(e){
     const rect=canvas.getBoundingClientRect();
     const x=Math.floor((e.clientX-rect.left)/rect.width*W);
     const y=Math.floor((e.clientY-rect.top)/rect.height*H);
-    setPixel(x,y,color); send({type:'place',x,y,color});
+    setPixel(x,y,color);send({type:'place',x,y,color});
   }
 
-  function buildPalette(){
-    paletteEl.innerHTML='';
-    for(const hex of COLORS){
-      const sw=document.createElement('div');
-      sw.className='swatch'; sw.style.background=hex; sw.dataset.hex=hex;
-      if(hex===color) sw.classList.add('active');
-      sw.onclick=()=>{color=hex;document.querySelectorAll('.swatch').forEach(s=>s.classList.remove('active'));sw.classList.add('active');};
-      paletteEl.appendChild(sw);
-    }
-  }
+  const pal=document.getElementById('palette');
+  function build(){pal.innerHTML='';for(const hex of COLORS){
+    const sw=document.createElement('div');sw.className='swatch';sw.style.background=hex;
+    if(hex===color)sw.classList.add('active');
+    sw.onclick=()=>{color=hex;document.querySelectorAll('.swatch').forEach(s=>s.classList.remove('active'));sw.classList.add('active');};
+    pal.appendChild(sw);
+  }}build();
 
-  connectBtn.onclick=()=>{connect(wsUrlInput.value.trim());};
-  recenterBtn.onclick=()=>{ctx.setTransform(1,0,0,1,0,0);};
-  exportBtn.onclick=()=>{const a=document.createElement('a');a.href=canvas.toDataURL();a.download='board.png';a.click();};
-
-  buildPalette();
-  drawBoard();
+  connectBtn.onclick=()=>connect(wsUrl.value.trim());
 })();
 </script>
 </body>
