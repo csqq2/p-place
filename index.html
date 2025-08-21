@@ -4,9 +4,10 @@
   <meta charset="utf-8" />
   <title>simple r/place</title>
   <style>
-    body { margin:0; background:#111; color:#fff; font-family:sans-serif; text-align:center; }
-    canvas { background:#000; image-rendering:pixelated; cursor:crosshair; }
-    #palette { display:inline-grid; grid-template-columns:repeat(6,1fr); gap:4px; margin:8px auto; }
+    html, body { margin:0; padding:0; height:100%; background:#111; overflow:hidden; }
+    body { display:flex; flex-direction:column; align-items:center; justify-content:center; }
+    canvas { flex:1; width:100%; height:100%; background:#000; image-rendering:pixelated; touch-action:none; }
+    #palette { position:fixed; bottom:8px; left:50%; transform:translateX(-50%); display:inline-grid; grid-template-columns:repeat(6,1fr); gap:4px; background:#222; padding:4px; border-radius:6px; }
     .swatch { width:24px; height:24px; cursor:pointer; border:1px solid #444; }
     .swatch.active { outline:2px solid #fff; }
   </style>
@@ -23,7 +24,16 @@ let W=256,H=256;let pixels=ctx.createImageData(W,H);
 let ws=new WebSocket('wss://pplace.onrender.com');
 let color=COLORS[0];
 
-function draw(){ctx.putImageData(pixels,0,0);requestAnimationFrame(draw);}draw();
+// pan/zoom state
+let scale=20; // pixels -> screen
+let offsetX=0, offsetY=0;
+
+function render(){
+  ctx.imageSmoothingEnabled=false;
+  ctx.setTransform(scale,0,0,scale,offsetX,offsetY);
+  ctx.putImageData(pixels,0,0);
+  requestAnimationFrame(render);
+}render();
 
 function setPixel(x,y,hex){
   if(x<0||y<0||x>=W||y>=H)return;
@@ -41,18 +51,45 @@ ws.onmessage=(ev)=>{
   }catch{}
 };
 
+function screenToBoard(clientX,clientY){
+  const rect=canvas.getBoundingClientRect();
+  const x=(clientX-rect.left-offsetX)/scale;
+  const y=(clientY-rect.top-offsetY)/scale;
+  return [Math.floor(x),Math.floor(y)];
+}
+
 let drawing=false;
-canvas.onmousedown=e=>{drawing=true;place(e);};
-canvas.onmouseup=()=>drawing=false;
-canvas.onmousemove=e=>{if(drawing)place(e);};
+canvas.addEventListener('mousedown',e=>{drawing=true;place(e);});
+canvas.addEventListener('mouseup',()=>drawing=false);
+canvas.addEventListener('mousemove',e=>{if(drawing)place(e);});
 
 function place(e){
-  const rect=canvas.getBoundingClientRect();
-  const x=Math.floor((e.clientX-rect.left)/rect.width*W);
-  const y=Math.floor((e.clientY-rect.top)/rect.height*H);
+  const [x,y]=screenToBoard(e.clientX,e.clientY);
   setPixel(x,y,color);send({type:'place',x,y,color});
 }
 
+// touch controls: pan/zoom
+let lastDist=0,lastTouchMid=null;
+canvas.addEventListener('touchstart',e=>{if(e.touches.length===2){lastDist=dist(e.touches);lastTouchMid=mid(e.touches);}}, {passive:false});
+canvas.addEventListener('touchmove',e=>{
+  if(e.touches.length===1 && drawing){place(e.touches[0]);}
+  if(e.touches.length===2){
+    e.preventDefault();
+    const d=dist(e.touches);
+    const m=mid(e.touches);
+    const factor=d/lastDist;
+    scale*=factor; lastDist=d;
+    offsetX+=(m.x-lastTouchMid.x);
+    offsetY+=(m.y-lastTouchMid.y);
+    lastTouchMid=m;
+  }
+},{passive:false});
+canvas.addEventListener('touchend',()=>{drawing=false;});
+
+function dist(t){return Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);}
+function mid(t){return {x:(t[0].clientX+t[1].clientX)/2,y:(t[0].clientY+t[1].clientY)/2};}
+
+// palette
 const pal=document.getElementById('palette');
 function build(){pal.innerHTML='';for(const hex of COLORS){
   const sw=document.createElement('div');sw.className='swatch';sw.style.background=hex;
