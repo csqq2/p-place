@@ -4,21 +4,24 @@
   <meta charset="UTF-8">
   <title>r/place-like Board</title>
   <style>
-    body { font-family: sans-serif; text-align: center; }
-    #palette { display: flex; justify-content: center; margin: 10px; }
+    body { font-family: sans-serif; text-align: center; margin: 0; overflow: hidden; }
+    #palette { display: flex; flex-wrap: wrap; justify-content: center; margin: 10px; }
     .color {
       width: 24px; height: 24px; margin: 2px;
       border: 1px solid #000; cursor: pointer;
     }
     .selected { border: 3px solid red !important; }
-    canvas { border: 1px solid black; cursor: crosshair; }
+    #container { width: 100vw; height: 80vh; overflow: hidden; position: relative; }
+    canvas { border: 1px solid black; touch-action: none; }
   </style>
 </head>
 <body>
   <h1>r/place-like Board</h1>
   <p>Cooldown: <span id="cooldown">0</span>s</p>
   <div id="palette"></div>
-  <canvas id="board" width="512" height="512"></canvas>
+  <div id="container">
+    <canvas id="board" width="512" height="512"></canvas>
+  </div>
 
   <script>
     const DEFAULT_WS_URL = "wss://pplace.onrender.com/ws";
@@ -77,22 +80,109 @@
       return { r:(bigint>>16)&255, g:(bigint>>8)&255, b:bigint&255 };
     }
 
-    canvas.addEventListener("click", e => {
-      if (cooldown > 0) return;
-      const rect = canvas.getBoundingClientRect();
-      const x = Math.floor(e.clientX - rect.left);
-      const y = Math.floor(e.clientY - rect.top);
-      ws.send(JSON.stringify({ type:"set", x, y, color: currentColor }));
-      cooldown = 5;
-      cooldownEl.textContent = cooldown;
-    });
-
+    // cooldown
     setInterval(() => {
       if (cooldown > 0) {
         cooldown--;
         cooldownEl.textContent = cooldown;
       }
     }, 1000);
+
+    // place pixel
+    function placePixel(x, y) {
+      if (cooldown > 0) return;
+      ws.send(JSON.stringify({ type:"set", x, y, color: currentColor }));
+      cooldown = 5;
+      cooldownEl.textContent = cooldown;
+    }
+
+    // transform handling (zoom + pan)
+    let zoom = 1, offsetX = 0, offsetY = 0;
+    let isPanning = false, lastX = 0, lastY = 0;
+
+    function updateTransform() {
+      canvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`;
+      canvas.style.transformOrigin = "0 0";
+    }
+
+    // mouse controls
+    canvas.addEventListener("wheel", e => {
+      e.preventDefault();
+      const scale = e.deltaY > 0 ? 0.9 : 1.1;
+      zoom = Math.min(20, Math.max(0.5, zoom * scale));
+      updateTransform();
+    });
+
+    canvas.addEventListener("mousedown", e => {
+      isPanning = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+    });
+    window.addEventListener("mouseup", () => isPanning = false);
+    window.addEventListener("mousemove", e => {
+      if (!isPanning) return;
+      offsetX += e.clientX - lastX;
+      offsetY += e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      updateTransform();
+    });
+
+    canvas.addEventListener("click", e => {
+      const rect = canvas.getBoundingClientRect();
+      const x = Math.floor((e.clientX - rect.left - offsetX) / zoom);
+      const y = Math.floor((e.clientY - rect.top - offsetY) / zoom);
+      if (x>=0 && x<WIDTH && y>=0 && y<HEIGHT) placePixel(x,y);
+    });
+
+    // touch controls for mobile/tablet
+    let touchMode = null; // "pan" or "zoom"
+    let lastDist = 0;
+
+    canvas.addEventListener("touchstart", e => {
+      if (e.touches.length === 1) {
+        touchMode = "pan";
+        lastX = e.touches[0].clientX;
+        lastY = e.touches[0].clientY;
+      } else if (e.touches.length === 2) {
+        touchMode = "zoom";
+        lastDist = getTouchDist(e);
+      }
+    });
+
+    canvas.addEventListener("touchmove", e => {
+      e.preventDefault();
+      if (touchMode === "pan" && e.touches.length === 1) {
+        offsetX += e.touches[0].clientX - lastX;
+        offsetY += e.touches[0].clientY - lastY;
+        lastX = e.touches[0].clientX;
+        lastY = e.touches[0].clientY;
+        updateTransform();
+      } else if (touchMode === "zoom" && e.touches.length === 2) {
+        const dist = getTouchDist(e);
+        zoom *= dist / lastDist;
+        zoom = Math.min(20, Math.max(0.5, zoom));
+        lastDist = dist;
+        updateTransform();
+      }
+    }, { passive:false });
+
+    canvas.addEventListener("touchend", e => {
+      if (e.touches.length === 0 && touchMode === "pan") {
+        // tap = place pixel
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.floor((lastX - rect.left - offsetX) / zoom);
+        const y = Math.floor((lastY - rect.top - offsetY) / zoom);
+        if (x>=0 && x<WIDTH && y>=0 && y<HEIGHT) placePixel(x,y);
+      }
+      touchMode = null;
+    });
+
+    function getTouchDist(e) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      return Math.sqrt(dx*dx + dy*dy);
+    }
   </script>
 </body>
 </html>
