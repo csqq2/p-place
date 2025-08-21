@@ -1,20 +1,490 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>w/place</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>pplace – r/place-like Frontend</title>
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --panel: #111826;
+      --muted: #94a3b8;
+      --text: #e2e8f0;
+      --accent: #22d3ee;
+      --danger: #ef4444;
+      --ok: #22c55e;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font: 14px/1.6 system-ui, -apple-system, Segoe UI, Roboto, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic UI', sans-serif; }
+    body { margin: 0; display: grid; grid-template-rows: auto 1fr auto; }
+
+    header {
+      display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: linear-gradient(180deg, #0b0f1490, #0b0f1400);
+      position: sticky; top: 0; z-index: 10; backdrop-filter: blur(6px);
+    }
+    header .dot { width: 10px; height: 10px; border-radius: 999px; box-shadow: 0 0 10px currentColor; }
+    header .status { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--muted); }
+    header .grow { flex: 1; }
+    .badge { padding: 4px 8px; border-radius: 999px; border: 1px solid #263248; color: var(--muted); }
+    .btn { appearance: none; border: 0; background: #1a2334; color: var(--text); padding: 10px 12px; border-radius: 12px; box-shadow: var(--shadow); cursor: pointer; font-weight: 700; }
+    .btn:disabled { opacity: .6; cursor: not-allowed; }
+
+    main { display: grid; grid-template-columns: 1fr 300px; gap: 12px; padding: 12px; }
+    .boardWrap { position: relative; border-radius: 16px; overflow: hidden; background: #0c1320; box-shadow: var(--shadow); }
+    canvas { display:block; width: 100%; height: 100%; background: #0c1320; image-rendering: pixelated; }
+    .overlay { position: absolute; inset: 0; pointer-events: none; }
+    .coords { position: absolute; left: 10px; bottom: 10px; background: #0b1220aa; padding: 6px 10px; border-radius: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--muted); }
+    .toast { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: #0b1220cc; border: 1px solid #22314e; padding:10px 14px; border-radius: 12px; box-shadow: var(--shadow); font-weight: 600; }
+
+    aside { display: grid; gap: 12px; }
+    .panel { background: #0f172a; border: 1px solid #1f2a44; border-radius: 16px; padding: 12px; box-shadow: var(--shadow); }
+    .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .palette { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; }
+    .swatch { width: 30px; height: 30px; border-radius: 8px; border: 1px solid rgba(255,255,255,.15); cursor: pointer; }
+    .swatch.active { outline: 3px solid #fff; box-shadow: 0 0 0 3px #334155; }
+
+    .hint { color: var(--muted); font-size: 12px; }
+    .slider { width: 100%; }
+
+    footer { padding: 8px 14px; color: var(--muted); display:flex; gap:12px; align-items:center; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    @media (max-width: 900px){
+      main { grid-template-columns: 1fr; }
+      .boardWrap { height: min(70vh, 70svh); }
+    }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <h1>w/place</h1>
-        <div class="controls">
-            <label for="colorPicker">色を選ぶ:</label>
-            <input type="color" id="colorPicker" value="#000000">
-        </div>
-        <canvas id="pixelCanvas"></canvas>
+  <header>
+    <div class="status"><span id="connDot" class="dot" style="color:#64748b"></span><span id="connText">DISCONNECTED</span></div>
+    <div class="grow"></div>
+    <span class="badge">pplace – GH Pages client</span>
+    <button id="recenterBtn" class="btn">Recenter</button>
+    <button id="exportBtn" class="btn">Export PNG</button>
+  </header>
+
+  <main>
+    <div class="boardWrap">
+      <canvas id="board" width="1024" height="1024" aria-label="pixel board"></canvas>
+      <div class="overlay">
+        <div id="toast" class="toast" style="display:none"></div>
+        <div id="coord" class="coords">(x: -, y: -) zoom: 1.0x</div>
+      </div>
     </div>
-    <script src="script.js"></script>
+
+    <aside>
+      <section class="panel">
+        <h3 style="margin:0 0 8px 0">Colors</h3>
+        <div id="palette" class="palette"></div>
+        <div class="hint" style="margin-top:8px">クリックで色選択 / Shift+クリックでスポイト / Zでズーム、Space+ドラッグでパン</div>
+      </section>
+
+      <section class="panel">
+        <h3 style="margin:0 0 8px 0">Controls</h3>
+        <div class="row">
+          <label>Zoom <span id="zoomLabel" class="hint">1.0x</span></label>
+          <input id="zoomSlider" class="slider" type="range" min="1" max="50" step="0.1" value="4" />
+        </div>
+        <div class="row" style="margin-top:8px">
+          <label>Grid</label>
+          <input id="gridToggle" type="checkbox" checked />
+          <span class="hint">拡大時にグリッド表示</span>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <label>Cooldown</label>
+          <span id="cooldown" class="badge">-</span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h3 style="margin:0 0 8px 0">Server</h3>
+        <div class="row">
+          <input id="wsUrl" style="flex:1; padding:10px; border-radius:10px; border:1px solid #263248; background:#0b1220; color:var(--text)" />
+          <button id="connectBtn" class="btn">Connect</button>
+        </div>
+        <div class="hint" style="margin-top:8px">例: <code>wss://pplace.onrender.com</code> または <code>wss://pplace.onrender.com/ws</code></div>
+      </section>
+
+      <section class="panel">
+        <h3 style="margin:0 0 8px 0">About</h3>
+        <div class="hint">このフロントは JSON ベースのシンプルな WS プロトコルを話します。<br>
+          <code>{ type: "place", x, y, color }</code> を送信し、
+          サーバは <code>{ type: "pixel", x, y, color }</code> または <code>{ type: "init", width, height, pixels }</code> を返すことを想定しています。未知の形式でも良識的に解釈しようとします。
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <footer>
+    <span class="hint">Made for GH Pages × Render WS. 右クリックでキャンバス保存、または Export PNG。</span>
+  </footer>
+
+<script>
+(function(){
+  // ===== CONFIG =====
+  const DEFAULT_WS_CANDIDATES = [
+    'wss://pplace.onrender.com',
+    'wss://pplace.onrender.com/ws',
+    'wss://pplace.onrender.com/socket',
+    'wss://pplace.onrender.com/ws/place'
+  ];
+  const DEFAULT_WIDTH = 256, DEFAULT_HEIGHT = 256;
+  const CLIENT_COOLDOWN_MS = 5000; // client hint, server is source of truth
+  const COLORS = [
+    '#000000','#222222','#555555','#888888','#bbbbbb','#ffffff',
+    '#6d001a','#be0039','#ff4500','#ffa800','#ffd635','#fff8b8',
+    '#00a368','#00cc78','#7eed56','#00756f','#009eaa','#00ccc0',
+    '#2450a4','#3690ea','#51e9f4','#493ac1','#6a5cff','#94b3ff',
+    '#811e9f','#b44ac0','#e4abff','#de107f','#ff3881','#ff99aa'
+  ];
+
+  // ===== DOM =====
+  const canvas = document.getElementById('board');
+  const ctx = canvas.getContext('2d');
+  const coordEl = document.getElementById('coord');
+  const toastEl = document.getElementById('toast');
+  const zoomSlider = document.getElementById('zoomSlider');
+  const zoomLabel = document.getElementById('zoomLabel');
+  const gridToggle = document.getElementById('gridToggle');
+  const cooldownEl = document.getElementById('cooldown');
+  const paletteEl = document.getElementById('palette');
+  const wsUrlInput = document.getElementById('wsUrl');
+  const connectBtn = document.getElementById('connectBtn');
+  const exportBtn = document.getElementById('exportBtn');
+  const recenterBtn = document.getElementById('recenterBtn');
+  const connDot = document.getElementById('connDot');
+  const connText = document.getElementById('connText');
+
+  // ===== STATE =====
+  let W = DEFAULT_WIDTH, H = DEFAULT_HEIGHT;
+  let imgData = ctx.createImageData(W, H);
+  let buffer = imgData.data; // Uint8ClampedArray RGBA
+  let dirty = true;
+  let ws = null; let wsUrl = localStorage.getItem('wsUrl') || DEFAULT_WS_CANDIDATES[0];
+  let reconnectAttempt = 0; let manualDisconnect = false;
+  let color = localStorage.getItem('color') || COLORS[9];
+  let lastPlaceAt = 0; // ms
+
+  // View transform
+  let zoom = parseFloat(localStorage.getItem('zoom') || '8');
+  let offsetX = parseFloat(localStorage.getItem('offsetX') || `${W/2}`) - (canvas.width/2)/zoom;
+  let offsetY = parseFloat(localStorage.getItem('offsetY') || `${H/2}`) - (canvas.height/2)/zoom;
+  let isPanning = false; let panStart = {x:0,y:0}; let offsetStart = {x:0,y:0};
+
+  // ===== Helpers =====
+  function setStatus(ok, text){
+    connDot.style.color = ok ? 'var(--ok)' : '#64748b';
+    connText.textContent = text;
+  }
+  function showToast(msg, ms=1600){ toastEl.textContent = msg; toastEl.style.display='block'; clearTimeout(showToast._t); showToast._t=setTimeout(()=>toastEl.style.display='none', ms); }
+
+  function resizeBoard(newW, newH){
+    W = newW; H = newH;
+    canvas.width = Math.max(1, Math.min(4096, W));
+    canvas.height = Math.max(1, Math.min(4096, H));
+    imgData = ctx.createImageData(W, H);
+    buffer = imgData.data;
+    // Clear to transparent/black
+    for(let i=0;i<buffer.length;i+=4){ buffer[i]=12; buffer[i+1]=19; buffer[i+2]=32; buffer[i+3]=255; }
+    dirty = true;
+  }
+
+  function hexToRgb(hex){
+    const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex);
+    if(!m) return {r:0,g:0,b:0};
+    return { r: parseInt(m[1],16), g: parseInt(m[2],16), b: parseInt(m[3],16) };
+  }
+  function setPixel(x,y, hex){
+    if(x<0||y<0||x>=W||y>=H) return;
+    const {r,g,b} = hexToRgb(hex);
+    const idx = (y*W + x) * 4;
+    buffer[idx]=r; buffer[idx+1]=g; buffer[idx+2]=b; buffer[idx+3]=255;
+    dirty = true;
+  }
+
+  function draw(){
+    if(dirty){
+      ctx.putImageData(imgData, 0, 0);
+    }
+    // draw view (scaling, grid) into CSS sizing; we already rely on CSS pixelated scaling
+    if(gridToggle.checked && zoom >= 12){
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      const scale = zoom;
+      const stepX = scale, stepY = scale;
+      const overlay = ctx.getImageData(0,0,1,1); // noop to keep context active
+      // draw grid via CSS overlay? Instead we superimpose using a second pass
+      // Quick grid: draw using canvas overlay context
+      const ctx2 = canvas.getContext('2d');
+      ctx2.save();
+      ctx2.scale(scale, scale);
+      ctx2.translate(-offsetX, -offsetY);
+      ctx2.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx2.lineWidth = 1/scale;
+      // vertical lines
+      for(let x=0;x<=W;x++){
+        ctx2.beginPath(); ctx2.moveTo(x,0); ctx2.lineTo(x,H); ctx2.stroke();
+      }
+      // horizontal
+      for(let y=0;y<=H;y++){
+        ctx2.beginPath(); ctx2.moveTo(0,y); ctx2.lineTo(W,y); ctx2.stroke();
+      }
+      ctx2.restore();
+    }
+    requestAnimationFrame(draw);
+  }
+
+  function screenToBoard(px, py){
+    const rect = canvas.getBoundingClientRect();
+    const x = (px - rect.left) / rect.width * canvas.width; // canvas CSS -> internal px
+    const y = (py - rect.top) / rect.height * canvas.height;
+    // apply transform
+    const bx = Math.floor(x/zoom + offsetX);
+    const by = Math.floor(y/zoom + offsetY);
+    return {x: bx, y: by};
+  }
+
+  function updateCoordLabel(ev){
+    const {x,y} = screenToBoard(ev.clientX, ev.clientY);
+    coordEl.textContent = `(x: ${x}, y: ${y}) zoom: ${zoom.toFixed(1)}x`;
+  }
+
+  function setZoom(z){
+    zoom = Math.max(1, Math.min(50, z));
+    zoomLabel.textContent = `${zoom.toFixed(1)}x`;
+    localStorage.setItem('zoom', zoom);
+    dirty = true;
+  }
+
+  function recenter(){
+    offsetX = W/2 - (canvas.width/2)/zoom;
+    offsetY = H/2 - (canvas.height/2)/zoom;
+    localStorage.setItem('offsetX', offsetX);
+    localStorage.setItem('offsetY', offsetY);
+    dirty = true;
+  }
+
+  function setSelectedColor(hex){
+    color = hex; localStorage.setItem('color', color);
+    for(const el of document.querySelectorAll('.swatch')) el.classList.toggle('active', el.dataset.hex===color);
+  }
+
+  function msLeft(){
+    const left = CLIENT_COOLDOWN_MS - (Date.now()-lastPlaceAt);
+    return Math.max(0, left);
+  }
+
+  function tickCooldown(){
+    const left = msLeft();
+    cooldownEl.textContent = left ? `${(left/1000).toFixed(1)}s` : 'Ready';
+    cooldownEl.style.color = left ? 'var(--muted)' : 'var(--ok)';
+    requestAnimationFrame(tickCooldown);
+  }
+
+  // ===== WebSocket =====
+  function tryConnect(url){
+    if(ws) try{ ws.close(); }catch{}
+    ws = null; manualDisconnect = false;
+
+    function connectTo(u){
+      setStatus(false, 'CONNECTING…');
+      const sock = new WebSocket(u);
+      sock.binaryType = 'arraybuffer';
+      sock.onopen = () => {
+        ws = sock; reconnectAttempt = 0; setStatus(true, 'CONNECTED');
+        showToast('Connected');
+        send({ type:'hello', client:'gh-pages', version:1 });
+      };
+      sock.onmessage = (ev) => handleMessage(ev.data);
+      sock.onclose = () => {
+        setStatus(false, 'DISCONNECTED');
+        if(!manualDisconnect){
+          const backoff = Math.min(15000, 500 * Math.pow(2, reconnectAttempt++));
+          setTimeout(()=>autoConnect(), backoff);
+        }
+      };
+      sock.onerror = () => {};
+    }
+
+    // Try exact URL first; if it fails soon, cascade to candidates
+    const candidates = [url, ...DEFAULT_WS_CANDIDATES.filter(c=>c!==url)];
+    let idx = 0;
+    function autoConnect(){
+      if(manualDisconnect) return;
+      connectTo(candidates[idx% candidates.length]);
+      idx++;
+    }
+    autoConnect();
+  }
+
+  function send(obj){
+    if(!ws || ws.readyState!==1) return;
+    try { ws.send(JSON.stringify(obj)); } catch(e) { console.warn('send failed', e); }
+  }
+
+  function parseColor(any){
+    // Accept '#rrggbb' or integer index into COLORS or {r,g,b}
+    if(typeof any === 'string' && /^#([\da-f]{6})$/i.test(any)) return any.toLowerCase();
+    if(typeof any === 'number' && COLORS[any]) return COLORS[any];
+    if(any && typeof any==='object' && 'r' in any) return `#${[(any.r|0)&255,(any.g|0)&255,(any.b|0)&255].map(n=>n.toString(16).padStart(2,'0')).join('')}`;
+    return '#000000';
+  }
+
+  function handleMessage(data){
+    try{
+      if(data instanceof ArrayBuffer){
+        // Heuristic: first byte could be opcode; but we don't know. Ignore for now or future support.
+        console.log('binary message', new Uint8Array(data).slice(0,32));
+        return;
+      }
+      const msg = JSON.parse(data);
+      if(Array.isArray(msg)){
+        // Could be a batch of pixels [{x,y,color}, ...]
+        for(const it of msg){ if('x' in it && 'y' in it && 'color' in it) setPixel(it.x, it.y, parseColor(it.color)); }
+        return;
+      }
+      switch(msg.type){
+        case 'init': {
+          const w = msg.width || msg.w || W;
+          const h = msg.height || msg.h || H;
+          resizeBoard(w,h);
+          if(msg.pixels){
+            if(Array.isArray(msg.pixels)){
+              // Expect array of hex strings length w*h
+              const arr = msg.pixels; const n = Math.min(arr.length, W*H);
+              for(let i=0;i<n;i++){
+                const x = i % W, y = (i/W)|0; setPixel(x,y, parseColor(arr[i]));
+              }
+            } else if(typeof msg.pixels === 'string'){
+              // Optional RLE: "#rrggbb*count;..." or CSV of hex
+              const parts = msg.pixels.split(/[,;\n]/);
+              let i=0; for(const part of parts){
+                if(!part) continue;
+                const [hex, repStr] = part.split('*');
+                const rep = Math.max(1, parseInt(repStr||'1',10));
+                for(let k=0;k<rep;k++){
+                  const x = i % W, y = (i/W)|0; setPixel(x,y, parseColor(hex)); i++; if(i>=W*H) break;
+                }
+                if(i>=W*H) break;
+              }
+            }
+          }
+          dirty = true; break;
+        }
+        case 'pixel': {
+          const x = msg.x|0, y = msg.y|0, c = parseColor(msg.color);
+          setPixel(x,y,c); break;
+        }
+        case 'batch': {
+          for(const p of msg.list || []){ if(p && 'x' in p && 'y' in p && 'color' in p) setPixel(p.x,p.y, parseColor(p.color)); }
+          break;
+        }
+        case 'cooldown': {
+          // Server may tell us ms left
+          if(typeof msg.ms === 'number') lastPlaceAt = Date.now() - (CLIENT_COOLDOWN_MS - Math.max(0, msg.ms));
+          break;
+        }
+        case 'size': {
+          if(msg.width && msg.height) resizeBoard(msg.width, msg.height);
+          break;
+        }
+        default: {
+          // Unknown envelope; try to interpret as direct pixel
+          if('x' in msg && 'y' in msg && 'color' in msg){ setPixel(msg.x, msg.y, parseColor(msg.color)); }
+        }
+      }
+    } catch(e){ console.warn('bad message', e, data); }
+  }
+
+  // ===== Events =====
+  canvas.addEventListener('mousemove', (ev)=>{ updateCoordLabel(ev); });
+  canvas.addEventListener('mouseleave', ()=>{ coordEl.textContent = `(x: -, y: -) zoom: ${zoom.toFixed(1)}x`; });
+
+  canvas.addEventListener('mousedown', (ev)=>{
+    if(ev.button===1 || ev.button===2 || ev.code==='Space' || ev.ctrlKey || ev.metaKey){
+      isPanning = true; panStart = {x: ev.clientX, y: ev.clientY}; offsetStart = {x: offsetX, y: offsetY}; return;
+    }
+  });
+  window.addEventListener('mouseup', ()=>{ isPanning=false; });
+  window.addEventListener('mousemove', (ev)=>{
+    if(!isPanning) return;
+    const dx = (ev.clientX - panStart.x) / zoom;
+    const dy = (ev.clientY - panStart.y) / zoom;
+    offsetX = offsetStart.x - dx; offsetY = offsetStart.y - dy; dirty = true;
+    localStorage.setItem('offsetX', offsetX); localStorage.setItem('offsetY', offsetY);
+  });
+
+  canvas.addEventListener('wheel', (ev)=>{
+    ev.preventDefault();
+    const dir = Math.sign(ev.deltaY);
+    const factor = Math.pow(1.1, -dir); // invert deltaY: wheel up -> zoom in
+    const prev = zoom; setZoom(zoom * factor);
+    // zoom to cursor: adjust offset so cursor stays in place
+    const rect = canvas.getBoundingClientRect();
+    const cx = (ev.clientX - rect.left) / rect.width * canvas.width;
+    const cy = (ev.clientY - rect.top) / rect.height * canvas.height;
+    const ox = offsetX; const oy = offsetY;
+    offsetX = cx/zoom - (cx/prev - ox);
+    offsetY = cy/zoom - (cy/prev - oy);
+  }, {passive:false});
+
+  canvas.addEventListener('click', (ev)=>{
+    const eyedrop = ev.shiftKey; // Shift + Click = pick color
+    const {x,y} = screenToBoard(ev.clientX, ev.clientY);
+    if(x<0||y<0||x>=W||y>=H) return;
+    if(eyedrop){
+      const idx=(y*W+x)*4; const hex = `#${[buffer[idx],buffer[idx+1],buffer[idx+2]].map(n=>n.toString(16).padStart(2,'0')).join('')}`;
+      setSelectedColor(hex); showToast(`Picked ${hex}`);
+      return;
+    }
+    if(msLeft()>0){ showToast('On cooldown…'); return; }
+    lastPlaceAt = Date.now();
+    setPixel(x,y,color); // optimistic
+    send({ type:'place', x, y, color });
+  });
+
+  zoomSlider.addEventListener('input', ()=> setZoom(parseFloat(zoomSlider.value)) );
+  gridToggle.addEventListener('change', ()=> dirty=true );
+  exportBtn.addEventListener('click', ()=>{
+    // render the pixel buffer to an offscreen canvas 1:1 and export
+    const off = document.createElement('canvas'); off.width=W; off.height=H; const octx=off.getContext('2d'); octx.putImageData(imgData,0,0);
+    const url = off.toDataURL('image/png');
+    const a = document.createElement('a'); a.href = url; a.download = `pplace-${Date.now()}.png`; a.click();
+  });
+  recenterBtn.addEventListener('click', recenter);
+
+  connectBtn.addEventListener('click', ()=>{
+    const val = wsUrlInput.value.trim();
+    if(val){ wsUrl = val; localStorage.setItem('wsUrl', wsUrl); }
+    manualDisconnect = false; tryConnect(wsUrl);
+  });
+
+  // ===== Palette =====
+  function buildPalette(){
+    paletteEl.innerHTML='';
+    for(const hex of COLORS){
+      const sw = document.createElement('button');
+      sw.type='button'; sw.className='swatch'; sw.style.background = hex; sw.dataset.hex = hex;
+      if(hex.toLowerCase()===String(color).toLowerCase()) sw.classList.add('active');
+      sw.title = hex;
+      sw.addEventListener('click', ()=>{ setSelectedColor(hex); });
+      paletteEl.appendChild(sw);
+    }
+  }
+
+  // ===== Init =====
+  (function init(){
+    buildPalette();
+    wsUrlInput.value = wsUrl;
+    setZoom(zoom);
+    recenter();
+    tryConnect(wsUrl);
+    draw();
+    tickCooldown();
+  })();
+})();
+</script>
 </body>
 </html>
