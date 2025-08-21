@@ -1,133 +1,98 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <title>r/place client</title>
+  <meta charset="UTF-8">
+  <title>r/place-like Board</title>
   <style>
-    html, body { margin:0; padding:0; height:100%; background:#888; overflow:hidden; }
-    body { display:flex; flex-direction:column; }
-    canvas { flex:1; width:100%; height:100%; background:#fff; image-rendering:pixelated; touch-action:none; display:block; }
-    #palette { position:fixed; bottom:8px; left:50%; transform:translateX(-50%); display:inline-grid; grid-template-columns:repeat(6,1fr); gap:4px; background:#222; padding:4px; border-radius:6px; }
-    .swatch { width:24px; height:24px; cursor:pointer; border:1px solid #444; }
-    .swatch.active { outline:2px solid #fff; }
+    body { font-family: sans-serif; text-align: center; }
+    #palette { display: flex; justify-content: center; margin: 10px; }
+    .color {
+      width: 24px; height: 24px; margin: 2px;
+      border: 1px solid #000; cursor: pointer;
+    }
+    .selected { border: 3px solid red !important; }
+    canvas { border: 1px solid black; cursor: crosshair; }
   </style>
 </head>
 <body>
-  <canvas id="board"></canvas>
+  <h1>r/place-like Board</h1>
+  <p>Cooldown: <span id="cooldown">0</span>s</p>
   <div id="palette"></div>
+  <canvas id="board" width="512" height="512"></canvas>
 
-<script>
-const COLORS=['#000000','#FFFFFF','#FF0000','#00FF00','#0000FF','#FFFF00','#FF00FF','#00FFFF','#888888','#FFA500','#800080','#008000'];
-const canvas=document.getElementById('board');
-const ctx=canvas.getContext('2d');
-let W=256,H=256;let pixels=null;
-let ws=new WebSocket('wss://pplace.onrender.com');
-let color=COLORS[0];
+  <script>
+    const DEFAULT_WS_URL = "wss://pplace.onrender.com/ws";
+    const WIDTH = 512, HEIGHT = 512;
+    const PALETTE = [
+      "#000000", "#FFFFFF", "#888888",
+      "#F44336", "#E91E63", "#9C27B0", "#673AB7", "#3F51B5",
+      "#2196F3", "#03A9F4", "#00BCD4", "#009688", "#4CAF50",
+      "#8BC34A", "#CDDC39", "#FFEB3B", "#FFC107", "#FF9800",
+      "#FF5722", "#795548", "#9E9E9E", "#607D8B"
+    ];
 
-let scale=20; // px per board pixel
-let offsetX=0, offsetY=0;
+    const canvas = document.getElementById("board");
+    const ctx = canvas.getContext("2d");
+    const cooldownEl = document.getElementById("cooldown");
+    let currentColor = PALETTE[0];
+    let cooldown = 0;
 
-function resize(){canvas.width=window.innerWidth;canvas.height=window.innerHeight;}window.onresize=resize;resize();
+    // palette setup
+    const paletteDiv = document.getElementById("palette");
+    PALETTE.forEach(c => {
+      const div = document.createElement("div");
+      div.className = "color";
+      div.style.background = c;
+      div.onclick = () => {
+        currentColor = c;
+        document.querySelectorAll(".color").forEach(el => el.classList.remove("selected"));
+        div.classList.add("selected");
+      };
+      paletteDiv.appendChild(div);
+    });
+    paletteDiv.firstChild.classList.add("selected");
 
-function render(){
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.clearRect(0,0,canvas.width,canvas.height);
+    // websocket
+    const ws = new WebSocket(DEFAULT_WS_URL);
+    ws.onopen = () => console.log("Connected");
+    ws.onmessage = (ev) => {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === "pixel") {
+        drawPixel(msg.x, msg.y, msg.color);
+      }
+    };
 
-  // 白背景
-  ctx.fillStyle="#fff";
-  ctx.fillRect(0,0,canvas.width,canvas.height);
-
-  if(pixels){
-    ctx.imageSmoothingEnabled=false;
-    ctx.setTransform(scale,0,0,scale,offsetX,offsetY);
-    ctx.putImageData(pixels,0,0);
-
-    // グリッド
-    ctx.beginPath();
-    ctx.strokeStyle="rgba(0,0,0,0.1)";
-    for(let x=0;x<=W;x++){ctx.moveTo(x,0);ctx.lineTo(x,H);} 
-    for(let y=0;y<=H;y++){ctx.moveTo(0,y);ctx.lineTo(W,y);} 
-    ctx.stroke();
-  }
-  requestAnimationFrame(render);
-}render();
-
-function setPixel(x,y,hex){
-  if(!pixels||x<0||y<0||x>=W||y>=H)return;
-  const i=(y*W+x)*4;
-  const rgb=hex.match(/#(..)(..)(..)/).slice(1).map(h=>parseInt(h,16));
-  [pixels.data[i],pixels.data[i+1],pixels.data[i+2],pixels.data[i+3]]=[rgb[0],rgb[1],rgb[2],255];
-}
-
-function send(obj){if(ws.readyState===1)ws.send(JSON.stringify(obj));}
-
-ws.onmessage=(ev)=>{
-  try{
-    const m=JSON.parse(ev.data);
-    if(m.type==='init'){
-      W=m.width;H=m.height;
-      pixels=ctx.createImageData(W,H);
+    function drawPixel(x, y, hex) {
+      const rgb = hexToRgb(hex);
+      const imageData = ctx.createImageData(1,1);
+      imageData.data[0] = rgb.r;
+      imageData.data[1] = rgb.g;
+      imageData.data[2] = rgb.b;
+      imageData.data[3] = 255;
+      ctx.putImageData(imageData, x, y);
     }
-    if(m.type==='pixel') setPixel(m.x,m.y,m.color);
-  }catch{}
-};
 
-function screenToBoard(clientX,clientY){
-  const x=(clientX-offsetX)/scale;
-  const y=(clientY-offsetY)/scale;
-  return [Math.floor(x),Math.floor(y)];
-}
+    function hexToRgb(hex) {
+      const bigint = parseInt(hex.slice(1), 16);
+      return { r:(bigint>>16)&255, g:(bigint>>8)&255, b:bigint&255 };
+    }
 
-let drawing=false;
-canvas.addEventListener('mousedown',e=>{drawing=true;place(e.clientX,e.clientY);});
-canvas.addEventListener('mouseup',()=>drawing=false);
-canvas.addEventListener('mousemove',e=>{if(drawing)place(e.clientX,e.clientY);});
+    canvas.addEventListener("click", e => {
+      if (cooldown > 0) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = Math.floor(e.clientX - rect.left);
+      const y = Math.floor(e.clientY - rect.top);
+      ws.send(JSON.stringify({ type:"set", x, y, color: currentColor }));
+      cooldown = 5;
+      cooldownEl.textContent = cooldown;
+    });
 
-function place(x,y){
-  const [bx,by]=screenToBoard(x,y);
-  setPixel(bx,by,color);
-  send({type:'place',x:bx,y:by,color});
-}
-
-// touch (1指描画、2指パン/ズーム)
-let lastDist=0,lastMid=null;
-canvas.addEventListener('touchstart',e=>{
-  if(e.touches.length===1) drawing=true;
-  if(e.touches.length===2){lastDist=dist(e.touches);lastMid=mid(e.touches);}  
-},{passive:false});
-canvas.addEventListener('touchmove',e=>{
-  if(e.touches.length===1 && drawing){
-    const t=e.touches[0];place(t.clientX,t.clientY);
-  }
-  if(e.touches.length===2){
-    e.preventDefault();
-    const d=dist(e.touches);const m=mid(e.touches);
-    const factor=d/lastDist;
-
-    // ズーム中心を考慮
-    offsetX=m.x-(m.x-offsetX)*factor;
-    offsetY=m.y-(m.y-offsetY)*factor;
-    scale*=factor;
-
-    offsetX+=m.x-lastMid.x;
-    offsetY+=m.y-lastMid.y;
-
-    lastDist=d;lastMid=m;
-  }
-},{passive:false});
-canvas.addEventListener('touchend',()=>{drawing=false;});
-
-function dist(t){return Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);}
-function mid(t){return {x:(t[0].clientX+t[1].clientX)/2,y:(t[0].clientY+t[1].clientY)/2};}
-
-// palette
-const pal=document.getElementById('palette');
-function build(){pal.innerHTML='';for(const hex of COLORS){
-  const sw=document.createElement('div');sw.className='swatch';sw.style.background=hex;
-  if(hex===color)sw.classList.add('active');
-  sw.onclick=()=>{color=hex;document.querySelectorAll('.swatch').forEach(s=>s.classList.remove('active'));sw.classList.add('active');};
-  pal.appendChild(sw);
-}}build();
-</script>
+    setInterval(() => {
+      if (cooldown > 0) {
+        cooldown--;
+        cooldownEl.textContent = cooldown;
+      }
+    }, 1000);
+  </script>
 </body>
 </html>
