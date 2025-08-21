@@ -2,80 +2,64 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>pplace – simple r/place-like</title>
+  <title>simple r/place</title>
   <style>
-    body { margin:0; background:#111; color:#fff; font-family:sans-serif; }
-    #top { padding:6px; background:#222; display:flex; gap:6px; align-items:center; }
-    #board { display:block; margin:0 auto; background:#000; image-rendering:pixelated; }
-    #palette { display:grid; grid-template-columns:repeat(6,1fr); gap:4px; padding:6px; background:#222; }
-    .swatch { width:28px; height:28px; cursor:pointer; border:1px solid #444; }
+    body { margin:0; background:#111; color:#fff; font-family:sans-serif; text-align:center; }
+    canvas { background:#000; image-rendering:pixelated; cursor:crosshair; }
+    #palette { display:inline-grid; grid-template-columns:repeat(6,1fr); gap:4px; margin:8px auto; }
+    .swatch { width:24px; height:24px; cursor:pointer; border:1px solid #444; }
     .swatch.active { outline:2px solid #fff; }
   </style>
 </head>
 <body>
-  <div id="top">
-    <input id="wsUrl" style="flex:1" placeholder="wss://..." />
-    <button id="connectBtn">Connect</button>
-    <span id="status">● DISCONNECTED</span>
-  </div>
   <canvas id="board" width="256" height="256"></canvas>
   <div id="palette"></div>
 
 <script>
-(function(){
-  const COLORS=['#000000','#FFFFFF','#FF0000','#00FF00','#0000FF','#FFFF00','#FF00FF','#00FFFF','#888888','#FFA500','#800080','#008000'];
-  const canvas=document.getElementById('board');
-  const ctx=canvas.getContext('2d');
-  let W=256,H=256;let pixels=ctx.createImageData(W,H);
-  let ws=null,color=COLORS[0];
+const COLORS=['#000000','#FFFFFF','#FF0000','#00FF00','#0000FF','#FFFF00','#FF00FF','#00FFFF','#888888','#FFA500','#800080','#008000'];
+const canvas=document.getElementById('board');
+const ctx=canvas.getContext('2d');
+let W=256,H=256;let pixels=ctx.createImageData(W,H);
+let ws=new WebSocket('wss://pplace.onrender.com');
+let color=COLORS[0];
 
-  function draw(){ctx.putImageData(pixels,0,0);requestAnimationFrame(draw);}draw();
+function draw(){ctx.putImageData(pixels,0,0);requestAnimationFrame(draw);}draw();
 
-  function setPixel(x,y,hex){
-    if(x<0||y<0||x>=W||y>=H)return;
-    const i=(y*W+x)*4;
-    const rgb=hex.match(/#(..)(..)(..)/).slice(1).map(h=>parseInt(h,16));
-    [pixels.data[i],pixels.data[i+1],pixels.data[i+2],pixels.data[i+3]]=[rgb[0],rgb[1],rgb[2],255];
-  }
+function setPixel(x,y,hex){
+  if(x<0||y<0||x>=W||y>=H)return;
+  const i=(y*W+x)*4;
+  const rgb=hex.match(/#(..)(..)(..)/).slice(1).map(h=>parseInt(h,16));
+  [pixels.data[i],pixels.data[i+1],pixels.data[i+2],pixels.data[i+3]]=[rgb[0],rgb[1],rgb[2],255];
+}
 
-  function send(obj){if(ws&&ws.readyState===1)ws.send(JSON.stringify(obj));}
+function send(obj){if(ws.readyState===1)ws.send(JSON.stringify(obj));}
 
-  function connect(url){
-    if(ws)ws.close();
-    ws=new WebSocket(url);
-    ws.onopen=()=>{status.textContent='● CONNECTED';};
-    ws.onclose=()=>{status.textContent='● DISCONNECTED';};
-    ws.onmessage=(ev)=>{
-      try{const m=JSON.parse(ev.data);
-        if(m.type==='init'){W=m.width;H=m.height;pixels=ctx.createImageData(W,H);}
-        if(m.type==='pixel')setPixel(m.x,m.y,m.color);
-      }catch{}
-    };
-  }
+ws.onmessage=(ev)=>{
+  try{const m=JSON.parse(ev.data);
+    if(m.type==='init'){W=m.width;H=m.height;pixels=ctx.createImageData(W,H);}
+    if(m.type==='pixel')setPixel(m.x,m.y,m.color);
+  }catch{}
+};
 
-  let drawing=false;
-  canvas.addEventListener('mousedown',e=>{drawing=true;place(e);});
-  canvas.addEventListener('mouseup',()=>drawing=false);
-  canvas.addEventListener('mousemove',e=>{if(drawing)place(e);});
+let drawing=false;
+canvas.onmousedown=e=>{drawing=true;place(e);};
+canvas.onmouseup=()=>drawing=false;
+canvas.onmousemove=e=>{if(drawing)place(e);};
 
-  function place(e){
-    const rect=canvas.getBoundingClientRect();
-    const x=Math.floor((e.clientX-rect.left)/rect.width*W);
-    const y=Math.floor((e.clientY-rect.top)/rect.height*H);
-    setPixel(x,y,color);send({type:'place',x,y,color});
-  }
+function place(e){
+  const rect=canvas.getBoundingClientRect();
+  const x=Math.floor((e.clientX-rect.left)/rect.width*W);
+  const y=Math.floor((e.clientY-rect.top)/rect.height*H);
+  setPixel(x,y,color);send({type:'place',x,y,color});
+}
 
-  const pal=document.getElementById('palette');
-  function build(){pal.innerHTML='';for(const hex of COLORS){
-    const sw=document.createElement('div');sw.className='swatch';sw.style.background=hex;
-    if(hex===color)sw.classList.add('active');
-    sw.onclick=()=>{color=hex;document.querySelectorAll('.swatch').forEach(s=>s.classList.remove('active'));sw.classList.add('active');};
-    pal.appendChild(sw);
-  }}build();
-
-  connectBtn.onclick=()=>connect(wsUrl.value.trim());
-})();
+const pal=document.getElementById('palette');
+function build(){pal.innerHTML='';for(const hex of COLORS){
+  const sw=document.createElement('div');sw.className='swatch';sw.style.background=hex;
+  if(hex===color)sw.classList.add('active');
+  sw.onclick=()=>{color=hex;document.querySelectorAll('.swatch').forEach(s=>s.classList.remove('active'));sw.classList.add('active');};
+  pal.appendChild(sw);
+}}build();
 </script>
 </body>
 </html>
