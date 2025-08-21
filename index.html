@@ -5,7 +5,6 @@
   <title>w/place-like Board</title>
   <style>
     body { margin: 0; overflow: hidden; font-family: sans-serif; background:#eee; }
-
     #palette {
       position: absolute;
       top: 60px; left: 50%; transform: translateX(-50%);
@@ -30,11 +29,9 @@
     const DEFAULT_WS_URL = "wss://pplace.onrender.com/ws";
     const WIDTH = 512, HEIGHT = 512;
     const PALETTE = [
-      "#000000", "#FFFFFF", "#888888",
-      "#F44336", "#E91E63", "#9C27B0", "#673AB7", "#3F51B5",
-      "#2196F3", "#03A9F4", "#00BCD4", "#009688", "#4CAF50",
-      "#8BC34A", "#CDDC39", "#FFEB3B", "#FFC107", "#FF9800",
-      "#FF5722", "#795548", "#9E9E9E", "#607D8B"
+      "#000000","#FFFFFF","#888888","#F44336","#E91E63","#9C27B0","#673AB7","#3F51B5",
+      "#2196F3","#03A9F4","#00BCD4","#009688","#4CAF50","#8BC34A","#CDDC39","#FFEB3B",
+      "#FFC107","#FF9800","#FF5722","#795548","#9E9E9E","#607D8B"
     ];
 
     const canvas = document.getElementById("board");
@@ -54,7 +51,8 @@
     let currentColor = PALETTE[0];
     let cooldown = 0;
     let zoom = 20, offsetX = canvas.width/2 - (WIDTH*zoom)/2, offsetY = canvas.height/2 - (HEIGHT*zoom)/2;
-    let isPanning = false, lastX = 0, lastY = 0;
+    let isPanning = false;
+    let lastX = 0, lastY = 0;
     let touchMode = null, lastDist = 0;
 
     // パレット作成
@@ -72,21 +70,19 @@
     });
     paletteDiv.firstChild.classList.add("selected");
 
-  
-    // websocket
+    // WebSocket
     const ws = new WebSocket(DEFAULT_WS_URL);
     ws.onopen = () => console.log("Connected");
-    ws.onmessage = (ev) => {
+    ws.onmessage = ev => {
       const msg = JSON.parse(ev.data);
-      if (msg.type === "pixel") {
-        setPixel(msg.x, msg.y, msg.color);
-      }
+      if (msg.type === "pixel") setPixel(msg.x, msg.y, msg.color);
     };
 
     function setPixel(x,y,color){
       offctx.fillStyle = color;
       offctx.fillRect(x,y,1,1);
     }
+
     function placePixel(x,y){
       if (cooldown>0) return;
       ws.send(JSON.stringify({ type:"set", x, y, color: currentColor }));
@@ -112,10 +108,11 @@
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(offscreen,0,0);
 
-      // グリッド
+      // 軽量グリッド（間隔20pxごとに描画）
+      const step = 20;
       ctx.beginPath();
-      for(let x=0; x<=WIDTH; x++) { ctx.moveTo(x,0); ctx.lineTo(x,HEIGHT); }
-      for(let y=0; y<=HEIGHT; y++) { ctx.moveTo(0,y); ctx.lineTo(WIDTH,y); }
+      for(let x=0; x<=WIDTH; x+=step){ ctx.moveTo(x,0); ctx.lineTo(x,HEIGHT); }
+      for(let y=0; y<=HEIGHT; y+=step){ ctx.moveTo(0,y); ctx.lineTo(WIDTH,y); }
       ctx.lineWidth = 0.02;
       ctx.strokeStyle = "rgba(0,0,0,0.1)";
       ctx.stroke();
@@ -128,91 +125,93 @@
     window.addEventListener("wheel", e=>{
       e.preventDefault();
       const scale = e.deltaY>0 ? 0.9 : 1.1;
+      const prevZoom = zoom;
       zoom = Math.min(80, Math.max(2, zoom*scale));
+
+      // マウス位置基準でズーム中心を補正
+      const mx = e.clientX;
+      const my = e.clientY;
+      offsetX -= (mx - offsetX) * (zoom / prevZoom - 1);
+      offsetY -= (my - offsetY) * (zoom / prevZoom - 1);
     }, {passive:false});
+
     window.addEventListener("mousedown", e=>{
-      if (mode==="move") {
-        isPanning = true; lastX = e.clientX; lastY = e.clientY;
-      }
+      isPanning = true; lastX = e.clientX; lastY = e.clientY;
     });
     window.addEventListener("mouseup", ()=> isPanning=false);
     window.addEventListener("mousemove", e=>{
-      if (isPanning) {
-        offsetX += (e.clientX - lastX);
-        offsetY += (e.clientY - lastY);
-        lastX = e.clientX; lastY = e.clientY;
+      if(isPanning){
+        offsetX += e.clientX - lastX;
+        offsetY += e.clientY - lastY;
+        lastX = e.clientX;
+        lastY = e.clientY;
       }
     });
     canvas.addEventListener("click", e=>{
-      if (mode!=="paint") return;
       const pos = screenToBoard(e.clientX,e.clientY);
-      if (pos.x>=0 && pos.x<WIDTH && pos.y>=0 && pos.y<HEIGHT) placePixel(pos.x,pos.y);
+      if(pos.x>=0 && pos.x<WIDTH && pos.y>=0 && pos.y<HEIGHT) placePixel(pos.x,pos.y);
     });
 
-  // タッチ操作
-let touchMode = null;
-let lastX = 0, lastY = 0, lastDist = 0;
+    // タッチ操作
+    canvas.addEventListener("touchstart", e => {
+      if(e.touches.length===1){
+        touchMode="single";
+        lastX = e.touches[0].clientX;
+        lastY = e.touches[0].clientY;
+      } else if(e.touches.length===2){
+        touchMode="multi";
+        lastX = (e.touches[0].clientX + e.touches[1].clientX)/2;
+        lastY = (e.touches[0].clientY + e.touches[1].clientY)/2;
+        lastDist = getTouchDist(e);
+      }
+    });
 
-canvas.addEventListener("touchstart", e => {
-  if (e.touches.length === 1) {
-    touchMode = "single";
-    lastX = e.touches[0].clientX;
-    lastY = e.touches[0].clientY;
-  } else if (e.touches.length === 2) {
-    touchMode = "multi";
-    lastX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-    lastY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-    lastDist = getTouchDist(e);
-  }
-});
+    canvas.addEventListener("touchmove", e=>{
+      e.preventDefault();
+      if(touchMode==="single" && e.touches.length===1){
+        const pos = screenToBoard(e.touches[0].clientX, e.touches[0].clientY);
+        if(pos.x>=0 && pos.x<WIDTH && pos.y>=0 && pos.y<HEIGHT) placePixel(pos.x,pos.y);
+      } else if(touchMode==="multi" && e.touches.length===2){
+        const centerX = (e.touches[0].clientX + e.touches[1].clientX)/2;
+        const centerY = (e.touches[0].clientY + e.touches[1].clientY)/2;
 
-canvas.addEventListener("touchmove", e => {
-  e.preventDefault();
-  if (touchMode === "single" && e.touches.length === 1) {
-    // 1本指で描画
-    const rect = canvas.getBoundingClientRect();
-    const x = Math.floor((e.touches[0].clientX - rect.left) / zoom);
-    const y = Math.floor((e.touches[0].clientY - rect.top) / zoom);
-    if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) placePixel(x, y);
-  } else if (touchMode === "multi" && e.touches.length === 2) {
-    // 2本指で移動
-    const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-    const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-    offsetX += centerX - lastX;
-    offsetY += centerY - lastY;
+        offsetX += centerX - lastX;
+        offsetY += centerY - lastY;
 
-    // 2本指ピンチズーム
-    const dist = getTouchDist(e);
-    const scale = dist / lastDist;
-    const prevZoom = zoom;
-    zoom = Math.min(80, Math.max(2, zoom * scale));
+        const dist = getTouchDist(e);
+        const scale = dist / lastDist;
+        const prevZoom = zoom;
+        zoom = Math.min(80, Math.max(2, zoom*scale));
 
-    // 中心基準で補正
-    offsetX -= (centerX - offsetX) * (zoom / prevZoom - 1);
-    offsetY -= (centerY - offsetY) * (zoom / prevZoom - 1);
+        offsetX -= (centerX - offsetX) * (zoom / prevZoom - 1);
+        offsetY -= (centerY - offsetY) * (zoom / prevZoom - 1);
 
-    lastDist = dist;
-    lastX = centerX;
-    lastY = centerY;
+        lastDist = dist;
+        lastX = centerX;
+        lastY = centerY;
+      }
+    }, {passive:false});
 
-    updateTransform();
-  }
-}, { passive: false });
+    canvas.addEventListener("touchend", e=>{
+      if(e.touches.length===0) touchMode=null;
+      else if(e.touches.length===1){
+        touchMode="single";
+        lastX = e.touches[0].clientX;
+        lastY = e.touches[0].clientY;
+      }
+    });
 
-canvas.addEventListener("touchend", e => {
-  if (e.touches.length === 0) touchMode = null;
-  else if (e.touches.length === 1) {
-    touchMode = "single";
-    lastX = e.touches[0].clientX;
-    lastY = e.touches[0].clientY;
-  }
-});
+    function getTouchDist(e){
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      return Math.sqrt(dx*dx + dy*dy);
+    }
 
-function getTouchDist(e) {
-  const dx = e.touches[0].clientX - e.touches[1].clientX;
-  const dy = e.touches[0].clientY - e.touches[1].clientY;
-  return Math.sqrt(dx * dx + dy * dy);
-}
+    // ウィンドウリサイズ対応
+    window.addEventListener("resize", ()=>{
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    });
 
   </script>
 </body>
