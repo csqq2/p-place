@@ -178,47 +178,67 @@
     });
 
     // タッチ操作
-    canvas.addEventListener("touchstart", e=>{
-      if (e.touches.length===1) {
-        if (mode==="move") {
-          touchMode="pan"; lastX=e.touches[0].clientX; lastY=e.touches[0].clientY;
-        } else if (mode==="paint") {
-          const pos=screenToBoard(e.touches[0].clientX,e.touches[0].clientY);
-          placePixel(pos.x,pos.y);
-        }
-      } else if (e.touches.length===2) {
-        touchMode="zoom"; lastDist=getTouchDist(e);
-      }
-    });
-  canvas.addEventListener("touchmove", e => {
-  e.preventDefault();
-  if (touchMode === "pan" && e.touches.length === 1) {
-    offsetX += e.touches[0].clientX - lastX;
-    offsetY += e.touches[0].clientY - lastY;
+let touchMode = null; 
+let lastX = 0, lastY = 0, lastDist = 0;
+
+canvas.addEventListener("touchstart", e => {
+  if (e.touches.length === 1) {
+    touchMode = "single";
     lastX = e.touches[0].clientX;
     lastY = e.touches[0].clientY;
-    updateTransform();
-  } else if (touchMode === "zoom" && e.touches.length === 2) {
-    const prevDist = lastDist;
-    const dist = getTouchDist(e);
-    const scale = dist / prevDist;
+  } else if (e.touches.length === 2) {
+    touchMode = "multi";
+    lastX = (e.touches[0].clientX + e.touches[1].clientX)/2;
+    lastY = (e.touches[0].clientY + e.touches[1].clientY)/2;
+    lastDist = getTouchDist(e);
+  }
+});
 
-    // 2本指の中心を取得
+canvas.addEventListener("touchmove", e => {
+  e.preventDefault();
+  if (touchMode === "single" && e.touches.length === 1) {
+    // 1本指でペイント
+    const rect = canvas.getBoundingClientRect();
+    const x = Math.floor((e.touches[0].clientX - rect.left) / zoom);
+    const y = Math.floor((e.touches[0].clientY - rect.top) / zoom);
+    if (x>=0 && x<WIDTH && y>=0 && y<HEIGHT) placePixel(x, y);
+  } else if (touchMode === "multi" && e.touches.length === 2) {
     const centerX = (e.touches[0].clientX + e.touches[1].clientX)/2;
     const centerY = (e.touches[0].clientY + e.touches[1].clientY)/2;
 
-    // ズーム更新
-    const prevZoom = zoom;
-    zoom = Math.min(80, Math.max(2, zoom*scale));
+    // 2本指で移動
+    offsetX += centerX - lastX;
+    offsetY += centerY - lastY;
 
-    // 中心位置を基準にオフセット補正
-    offsetX -= (centerX - offsetX) * (zoom/prevZoom - 1);
-    offsetY -= (centerY - offsetY) * (zoom/prevZoom - 1);
+    if (mode === "move") {
+      // 移動モードならピンチでズーム
+      const dist = getTouchDist(e);
+      const scale = dist / lastDist;
+      const prevZoom = zoom;
+      zoom = Math.min(80, Math.max(2, zoom*scale));
 
-    lastDist = dist;
+      // 中心を基準に補正
+      offsetX -= (centerX - offsetX) * (zoom/prevZoom - 1);
+      offsetY -= (centerY - offsetY) * (zoom/prevZoom - 1);
+
+      lastDist = dist;
+    }
+
+    lastX = centerX;
+    lastY = centerY;
+
     updateTransform();
   }
 }, { passive:false });
+
+canvas.addEventListener("touchend", e => {
+  if (e.touches.length === 0) touchMode = null;
+  else if (e.touches.length === 1) {
+    touchMode = "single";
+    lastX = e.touches[0].clientX;
+    lastY = e.touches[0].clientY;
+  }
+});
 
     canvas.addEventListener("touchend", ()=>{touchMode=null;});
 
